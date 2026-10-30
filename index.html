@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gold Live Pattern Dashboard</title>
+<style>
+:root{--bg:#f6f4ee;--card:#fff;--tx:#1d1b16;--mut:#6b675c;--bd:#e3dfd2;--gold:#b8860b;--up:#1a8f4c;--dn:#c8372d;--blue:#2f6fd0}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#14130f;--card:#1e1c16;--tx:#f1ede0;--mut:#9d9886;--bd:#34311f;--gold:#e0b23c;--up:#43c277;--dn:#ef6a5e;--blue:#6aa0f0}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:14px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+h1{font-size:19px;margin:0}.px{font-size:26px;font-weight:700}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px;margin-bottom:10px}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 6px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}@media(max-width:640px){.g3{grid-template-columns:1fr}}
+.big{font-size:18px;font-weight:700}.mut{color:var(--mut);font-size:12px}
+.up{color:var(--up)}.dn{color:var(--dn)}
+.split{display:flex;height:34px;border-radius:10px;overflow:hidden;font-weight:700;color:#fff;font-size:14px}
+.split div{display:flex;align-items:center;justify-content:center;transition:width .5s;min-width:44px}
+#sb{background:var(--up)}#ss{background:var(--dn)}
+.verdict{font-size:22px;font-weight:800;margin:8px 0 2px}
+ul{margin:6px 0 0;padding-left:18px;font-size:13px}li{margin:2px 0}
+canvas{width:100%;height:250px;display:block}
+select,button{padding:7px 10px;border-radius:9px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font:inherit}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--mut);margin-right:5px}
+.ok .dot{background:var(--up)}.bad .dot{background:var(--dn)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top">
+  <div><h1>🥇 Gold Live Pattern Dashboard</h1><div class="mut" id="st"><span class="dot"></span>connecting...</div></div>
+  <div style="text-align:right"><div class="px" id="px">--</div>
+    <select id="iv"><option value="1m">1 min</option><option value="5m" selected>5 min</option><option value="15m">15 min</option></select>
+    <button id="demo">Demo</button></div>
+</div>
+
+<div class="card">
+  <h2>Buy / Sell score</h2>
+  <div class="split"><div id="sb" style="width:50%">BUY 50%</div><div id="ss" style="width:50%">SELL 50%</div></div>
+  <div class="verdict" id="vd">...</div>
+  <div class="mut">Ye indicators ke agreement ka score hai, jeetne ki probability nahi.</div>
+</div>
+
+<div class="g3">
+  <div class="card"><h2>Abhi ban rahi candle</h2><div class="big" id="cN">-</div><div class="mut" id="cD"></div></div>
+  <div class="card"><h2>Previous candle (closed)</h2><div class="big" id="pN">-</div><div class="mut" id="pD"></div></div>
+  <div class="card"><h2>Chart pattern</h2><div class="big" id="gN">-</div><div class="mut" id="gD"></div></div>
+</div>
+
+<div class="card"><h2>Score kaise bana</h2><ul id="rs"></ul></div>
+
+<div class="card"><canvas id="cv"></canvas>
+<div class="mut"><span style="color:var(--gold)">━ EMA9</span> &nbsp;<span style="color:var(--blue)">━ EMA21</span> &nbsp;● swing high/low</div></div>
+
+<div class="mut">Data: Binance PAXG/USDT (gold-backed token, spot gold ke kareeb). MT5 ke XAUUSD se price thoda alag ho sakta hai, aur ye weekend par bhi chalta hai. Ye sirf educational tool hai, financial advice nahi. Real paise lagane se pehle demo/paper par test karo.</div>
+</div>
+
+<script>
+var $=function(i){return document.getElementById(i)};
+var HOSTS=["https://data-api.binance.vision","https://api.binance.com"],D=[],demo=false,busy=false,tc=0;
+function ema(a,n){var k=2/(n+1),o=[a[0]];for(var i=1;i<a.length;i++)o.push(a[i]*k+o[i-1]*(1-k));return o}
+function rsi(c,n){var g=0,l=0;for(var i=1;i<=n;i++){var d=c[i]-c[i-1];d>0?g+=d:l-=d}g/=n;l/=n;
+  for(var j=n+1;j<c.length;j++){var e=c[j]-c[j-1];g=(g*(n-1)+Math.max(e,0))/n;l=(l*(n-1)+Math.max(-e,0))/n}
+  return l==0?100:100-100/(1+g/l)}
+function atr(a,n){var s=0,m=a.slice(-n-1);for(var i=1;i<m.length;i++)s+=Math.max(m[i].h-m[i].l,Math.abs(m[i].h-m[i-1].c),Math.abs(m[i].l-m[i-1].c));return s/n}
+
+/* ---- candle classifier ---- */
+function candle(c,p){
+  var b=Math.abs(c.c-c.o),r=c.h-c.l,up=Math.max(c.o,c.c),lo=Math.min(c.o,c.c),uw=c.h-up,lw=lo-c.l,bull=c.c>=c.o;
+  if(r<1e-6)return{n:"Flat",b:0,d:"Koi movement nahi"};
+  if(p&&c.c>c.o&&p.c<p.o&&c.c>=p.o&&c.o<=p.c)return{n:"Bullish Engulfing",b:1,d:"Pichli red candle ko cover kiya, buyers strong"};
+  if(p&&c.c<c.o&&p.c>p.o&&c.c<=p.o&&c.o>=p.c)return{n:"Bearish Engulfing",b:-1,d:"Pichli green candle ko cover kiya, sellers strong"};
+  if(b<=.1*r){if(lw>.6*r)return{n:"Dragonfly Doji",b:1,d:"Neeche se rejection, bullish hint"};
+    if(uw>.6*r)return{n:"Gravestone Doji",b:-1,d:"Upar se rejection, bearish hint"};return{n:"Doji",b:0,d:"Indecision, buyers/sellers barabar"}}
+  if(b>=.85*r)return bull?{n:"Bullish Marubozu",b:1,d:"Poori candle buyers ke control mein"}:{n:"Bearish Marubozu",b:-1,d:"Poori candle sellers ke control mein"};
+  if(lw>=2*b&&uw<=.5*b)return{n:"Hammer / Bullish Pin Bar",b:1,d:"Lambi neeche wick, buyers ne neeche se utha diya"};
+  if(uw>=2*b&&lw<=.5*b)return{n:"Shooting Star / Bearish Pin Bar",b:-1,d:"Lambi upar wick, sellers ne upar se gira diya"};
+  if(p&&c.h<=p.h&&c.l>=p.l)return{n:"Inside Bar",b:0,d:"Pichli candle ke andar, breakout ka wait"};
+  if(b<=.3*r)return{n:"Spinning Top",b:0,d:"Chhoti body, momentum kam"};
+  return bull?{n:"Bullish Candle",b:.5,d:"Normal green candle"}:{n:"Bearish Candle",b:-.5,d:"Normal red candle"}}
+
+/* ---- pivots & chart patterns ---- */
+function pivots(a,k,key,hi){var o=[];for(var i=k;i<a.length-k;i++){var ok=true;
+  for(var j=i-k;j<=i+k;j++){if(hi?a[j][key]>a[i][key]:a[j][key]<a[i][key]){ok=false;break}}
+  if(ok&&(o.length==0||i-o[o.length-1]>=k))o.push(i)}return o}
+function pattern(cl){
+  var a=cl.slice(-90),n=a.length,A=atr(a,14),ph=pivots(a,3,"h",true),pl=pivots(a,3,"l",false),last=a[n-1].c;
+  if(ph.length>=2){var x=ph[ph.length-2],y=ph[ph.length-1];
+    if(Math.abs(a[x].h-a[y].h)<=.35*A&&y-x>=5&&n-1-y<=20){
+      var neck=Math.min.apply(null,a.slice(x,y+1).map(function(b){return b.l}));
+      return{n:"Double Top",b:-1,d:last<neck?"Neckline toot gayi, bearish confirm":"Forming, neckline "+neck.toFixed(2)+" ke neeche close ka wait"}}}
+  if(pl.length>=2){var x2=pl[pl.length-2],y2=pl[pl.length-1];
+    if(Math.abs(a[x2].l-a[y2].l)<=.35*A&&y2-x2>=5&&n-1-y2<=20){
+      var neck2=Math.max.apply(null,a.slice(x2,y2+1).map(function(b){return b.h}));
+      return{n:"Double Bottom",b:1,d:last>neck2?"Neckline break, bullish confirm":"Forming, neckline "+neck2.toFixed(2)+" ke upar close ka wait"}}}
+  if(ph.length>=3&&pl.length>=3){
+    var h=ph.slice(-3),l=pl.slice(-3),sh=a[h[2]].h-a[h[0]].h,sl=a[l[2]].l-a[l[0]].l,t=.5*A;
+    if(Math.abs(sh)<=t&&sl>t)return{n:"Ascending Triangle",b:1,d:"Flat resistance + higher lows, upar breakout ka chance"};
+    if(Math.abs(sl)<=t&&sh<-t)return{n:"Descending Triangle",b:-1,d:"Flat support + lower highs, neeche breakout ka chance"};
+    if(sh<-t&&sl>t)return{n:"Symmetrical Triangle",b:0,d:"Range sikud rahi hai, breakout ka wait"}}
+  if(ph.length>=2&&pl.length>=2){
+    var hh=a[ph[ph.length-1]].h>a[ph[ph.length-2]].h,hl=a[pl[pl.length-1]].l>a[pl[pl.length-2]].l;
+    if(hh&&hl)return{n:"Uptrend (HH + HL)",b:1,d:"Higher highs aur higher lows"};
+    if(!hh&&!hl)return{n:"Downtrend (LH + LL)",b:-1,d:"Lower highs aur lower lows"}}
+  return{n:"Range / Sideways",b:0,d:"Koi clear pattern nahi"}}
+
+/* ---- strategy signal (agent wala rule) ---- */
+function trend(cl){var s=[];for(var j=cl.length-1;j>=0&&s.length<40;j-=3)s.unshift(cl[j].c);
+  var x=ema(s,9).pop(),y=ema(s,21).pop(),c=cl[cl.length-1].c;return x>y&&c>y?1:(x<y&&c<y?-1:0)}
+
+/* ---- main analysis ---- */
+function analyse(){
+  if(D.length<60)return;
+  var cl=D.slice(0,-1),cur=D[D.length-1],prv=cl[cl.length-1],pp=cl[cl.length-2];
+  var cc=candle(cur,prv),pc=candle(prv,pp),pt=pattern(cl);
+  var cs=cl.map(function(b){return b.c}),e9=ema(cs,9),e21=ema(cs,21),n=cs.length-1,R=rsi(cs,14),tr=trend(cl);
+  var net=0,rs=[];
+  function add(v,t){net+=v;rs.push((v>0?"+":v<0?"":"")+v.toFixed(1)+"  "+t)}
+  add(e9[n]>e21[n]&&cs[n]>e21[n]?2:(e9[n]<e21[n]&&cs[n]<e21[n]?-2:0),"EMA9/21 trend");
+  add(e21[n]>e21[n-5]?1:-1,"EMA21 slope");
+  add(R>=70?-1:R>=55?1:R>45?0:R>30?-1:1,"RSI "+R.toFixed(0)+(R>=70?" (overbought)":R<=30?" (oversold)":""));
+  add(pc.b*1.5,"Previous candle: "+pc.n);
+  add(cc.b*.5,"Current candle: "+cc.n);
+  add(pt.b*2,"Pattern: "+pt.n);
+  var e=e21[n],bar=prv,sig=0;
+  if(tr==1&&bar.l<=e+.3&&bar.c>e&&candle(bar,pp).b>=1)sig=3;
+  if(tr==-1&&bar.h>=e-.3&&bar.c<e&&candle(bar,pp).b<=-1)sig=-3;
+  add(sig,sig?"Strategy signal (EMA pullback + rejection)":"Strategy signal: nahi bana");
+  var buy=Math.max(5,Math.min(95,Math.round(50+50*Math.tanh(net/6))));
+  $("sb").style.width=buy+"%";$("ss").style.width=(100-buy)+"%";
+  $("sb").textContent="BUY "+buy+"%";$("ss").textContent="SELL "+(100-buy)+"%";
+  var v=$("vd");v.textContent=buy>=60?"BUY bias ▲":buy<=40?"SELL bias ▼":"WAIT, clear edge nahi";
+  v.className="verdict "+(buy>=60?"up":buy<=40?"dn":"");
+  $("cN").textContent=cc.n;$("cD").textContent=cc.d+" · O "+cur.o.toFixed(2)+" H "+cur.h.toFixed(2)+" L "+cur.l.toFixed(2)+" C "+cur.c.toFixed(2);
+  $("pN").textContent=pc.n;$("pD").textContent=pc.d+" · O "+prv.o.toFixed(2)+" H "+prv.h.toFixed(2)+" L "+prv.l.toFixed(2)+" C "+prv.c.toFixed(2);
+  $("gN").textContent=pt.n;$("gN").className="big "+(pt.b>0?"up":pt.b<0?"dn":"");$("gD").textContent=pt.d;
+  $("px").textContent=cur.c.toFixed(2);
+  var ul=$("rs");ul.innerHTML="";rs.forEach(function(t){var li=document.createElement("li");li.textContent=t;ul.appendChild(li)});
+  draw(e9.concat([ema(D.map(function(b){return b.c}),9).pop()]),D)}
+
+function draw(_,all){
+  var cv=$("cv"),r=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;if(!w)return;
+  cv.width=w*r;cv.height=h*r;var g=cv.getContext("2d");g.setTransform(r,0,0,r,0,0);
+  var cs=getComputedStyle(document.documentElement),C=function(v){return cs.getPropertyValue(v).trim()};
+  var N=60,a=Math.max(0,all.length-N),vis=all.slice(a),pw=w-50,bw=pw/N,off=N-vis.length;
+  var allc=all.map(function(b){return b.c}),E9=ema(allc,9),E21=ema(allc,21);
+  var hi=-1e9,lo=1e9;vis.forEach(function(b){hi=Math.max(hi,b.h);lo=Math.min(lo,b.l)});var pd=(hi-lo)*.06+1e-6;hi+=pd;lo-=pd;
+  var Y=function(v){return 6+(hi-v)/(hi-lo)*(h-12)},X=function(i){return(off+i-a+.5)*bw};
+  g.font="10px system-ui";
+  for(var k=0;k<=4;k++){var v=lo+(hi-lo)*k/4,y=Y(v);g.strokeStyle=C("--bd");g.beginPath();g.moveTo(0,y);g.lineTo(pw,y);g.stroke();g.fillStyle=C("--mut");g.fillText(v.toFixed(1),pw+4,y+3)}
+  [[E9,"--gold"],[E21,"--blue"]].forEach(function(e){g.strokeStyle=C(e[1]);g.lineWidth=1.5;g.beginPath();
+    for(var i=a;i<all.length;i++){i==a?g.moveTo(X(i),Y(e[0][i])):g.lineTo(X(i),Y(e[0][i]))}g.stroke()});
+  g.lineWidth=1;
+  for(var i2=a;i2<all.length;i2++){var b=all[i2],col=b.c>=b.o?C("--up"):C("--dn"),x=X(i2);g.strokeStyle=g.fillStyle=col;
+    g.beginPath();g.moveTo(x,Y(b.h));g.lineTo(x,Y(b.l));g.stroke();
+    var y1=Y(Math.max(b.o,b.c)),y2=Y(Math.min(b.o,b.c));g.fillRect(x-bw*.32,y1,bw*.64,Math.max(1.5,y2-y1))}
+  var cl=all.slice(0,-1),rel=cl.slice(-60);
+  [[pivots(rel,3,"h",true),"h"],[pivots(rel,3,"l",false),"l"]].forEach(function(p){g.fillStyle=C("--tx");
+    p[0].forEach(function(i){var idx=cl.length-rel.length+i;if(idx<a)return;g.beginPath();g.arc(X(idx),Y(cl[idx][p[1]])+(p[1]=="h"?-6:6),3,0,7);g.fill()})})}
+
+/* ---- data feed (unlimited polling) ---- */
+function status(ok,t){var s=$("st");s.className="mut "+(ok?"ok":"bad");s.innerHTML='<span class="dot"></span>';s.appendChild(document.createTextNode(t))}
+async function fetchK(){
+  var path="/api/v3/klines?symbol=PAXGUSDT&interval="+$("iv").value+"&limit=200",err;
+  for(var i=0;i<HOSTS.length;i++){try{var r=await fetch(HOSTS[i]+path);if(r.ok)return(await r.json()).map(function(k){return{t:k[0],o:+k[1],h:+k[2],l:+k[3],c:+k[4]}})}catch(e){err=e}}
+  throw err||new Error("fetch failed")}
+function demoInit(){var p=2650,o=[];for(var i=0;i<200;i++){var op=p,c=op+(Math.random()-.5)*1.4,hi=Math.max(op,c)+Math.random()*.5,lo=Math.min(op,c)-Math.random()*.5;
+  if(Math.random()<.15)lo-=.8;o.push({t:i,o:op,h:hi,l:lo,c:c});p=c}return o}
+async function poll(){
+  if(busy)return;busy=true;
+  try{
+    if(demo){var l=D[D.length-1];l.c+=(Math.random()-.5)*.7;l.h=Math.max(l.h,l.c);l.l=Math.min(l.l,l.c);tc++;
+      if(tc%10==0)D.push({t:D.length,o:l.c,h:l.c,l:l.c,c:l.c});if(D.length>260)D.shift();status(true,"DEMO mode (simulated data) · "+new Date().toLocaleTimeString())}
+    else{D=await fetchK();status(true,"LIVE PAXG/USDT · "+new Date().toLocaleTimeString())}
+    analyse()}
+  catch(e){status(false,"Data nahi aa raha, auto-retry chal raha hai... (internet check karo ya Demo dabao)")}
+  busy=false}
+$("iv").onchange=function(){demo=false;D=[];poll()};
+$("demo").onclick=function(){demo=!demo;$("demo").textContent=demo?"Live":"Demo";if(demo){D=demoInit();tc=0}else D=[];poll()};
+window.addEventListener("resize",function(){if(D.length)analyse()});
+async function wake(){try{if(navigator.wakeLock)await navigator.wakeLock.request("screen")}catch(e){}}
+document.addEventListener("visibilitychange",function(){if(!document.hidden){wake();poll()}});
+wake();poll();setInterval(poll,5000);
+</script>
+</body>
+</html>
